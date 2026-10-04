@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f6f2">
+    <title>LeNet-5 · Vision Lab</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <header class="topbar">
+        <a class="brand" href="/"
+          aria-label="Vision Lab home"><span class="brand-icon">◈</span> VISION<span class="brand-light">LAB</span></a>
+        <span
+          class="topbar-label">COMPUTER VISION / INTERACTIVE EXPLORATIONS</span>
+        <a href="/convolution/">Convolution lab ↗</a>
+        <span class="connection"
+          :class="{ online: s.connected }"><i></i>{{ s.connected ? "Server connected" : "Reconnecting…" }}</span>
+      </header>
+
+      <main>
+        <div class="page-heading">
+          <div>
+            <div
+              class="eyebrow">EXPLORATION 01 <span> / </span> NEURAL NETWORKS</div>
+            <h1>Inside LeNet-5<span class="title-dot">.</span></h1>
+            <p>Draw a digit. Follow the numbers. Change how the network thinks.</p>
+          </div>
+          <a class="paper-link"
+            href="https://leon.bottou.org/papers/lecun-98h"
+            target="_blank"
+            rel="noreferrer">LeCun et al., 1998 <span>↗</span></a>
+        </div>
+        <div
+          class="model-note"><span class="badge">UNTRAINED MODEL</span><span>Explore the mechanics with reproducible random weights. Output scores are not digit predictions.</span><span class="seed">SEED 1998</span></div>
+        <div v-if="s.error" class="error-banner"
+          role="alert">{{ s.error }}<button @click="s.error = ''" aria-label="Dismiss error">×</button></div>
+
+        <div class="workspace">
+          <aside class="input-panel panel">
+            <div
+              class="section-title"><span class="step-number">01</span><h2>Your input</h2><span class="mono muted">32 × 32</span></div>
+            <p class="subtle">Draw a single digit in the square.</p>
+            <div
+              class="drawing-wrap"><canvas ref="drawing" width="320" height="320" aria-label="Digit drawing canvas. Alternatively choose a sample digit below." @pointerdown="beginDraw" @pointermove="draw" @pointerup="endDraw" @pointercancel="endDraw" @lostpointercapture="endDraw"></canvas><span class="canvas-corner">GRAYSCALE INPUT</span></div>
+            <div
+              class="input-tools"><button @click="clearDrawing" title="Clear the drawing">⌫ <span>Clear</span></button><label class="button" title="Upload a PNG, JPEG, or WebP digit image">↥ <span>Upload</span><input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadImage" hidden></label><button @click="invert" title="Invert light and dark pixels">◐ <span>Invert</span></button></div>
+            <div class="small-label sample-label">OR TRY A DRAWN EXAMPLE</div>
+            <div
+              class="samples"><button v-for="digit in [0,1,2,3,4,5,6,7,8,9]" :key="digit" @click="sample(digit)" :aria-label="'Load sample digit ' + digit" :class="{ active: s.sample === digit }">{{ digit }}</button></div>
+            <label
+              class="check-label"><input type="checkbox" v-model="s.live"> Auto-run when input changes</label>
+            <div
+              class="input-footer"><span class="status-dot"></span>{{ s.inputName }}<span class="mono">1,024 px</span></div>
+          </aside>
+
+          <section class="network-area">
+            <div class="panel architecture-panel">
+              <div class="network-toolbar">
+                <div
+                  class="section-title"><span class="step-number">02</span><h2>Forward pass</h2></div>
+                <div
+                  class="playback"><button class="icon-button" @click="reset" title="Reset the forward pass" aria-label="Reset forward pass">↺</button><button @click="step" :disabled="!s.connected || s.pending || s.playing" title="Compute one layer">↦ Step</button><button class="primary" @click="togglePlay" :disabled="!s.connected" :title="s.playing ? 'Pause after the current layer' : 'Run all remaining layers'"><span>{{ s.playing ? "Ⅱ" : "▶" }}</span> {{ s.playing ? "Pause" : s.current === 7 ? "Run again" : "Run network" }}</button></div>
+              </div>
+              <div class="layer-flow" aria-label="LeNet-5 network layers">
+                <button v-for="(layer, index) in s.layers" :key="layer.id"
+                  class="layer-card"
+                  :class="{ selected: s.selected === index, complete: s.tensors[index], processing: s.pending && s.current + 1 === index }"
+                  @click="selectLayer(index)"
+                  :disabled="index > 0 && !s.tensors[index]"
+                  :title="layer.description">
+                  <div class="layer-indicator"><span class="layer-symbol" :class="layer.kind"><i v-for="n in (layer.kind === 'input' ? 1 : layer.kind === 'pool' ? 2 : 3)"></i></span><span class="layer-check" v-if="s.tensors[index]">✓</span></div>
+                  <strong>{{ layer.id === "input" ? "Input" : layer.id === "output" ? "Output" : layer.id }}</strong><span class="layer-shape">{{ layer.width === 1 ? layer.channels : layer.channels + ' × ' + layer.width + ' × ' + layer.height }}</span><span class="layer-type">{{ layer.kind === "output" ? "Softmax" : layer.name }}</span>
+                </button>
+              </div>
+              <div
+                class="flow-footer"><span><i class="legend-dot"></i>{{ s.current < 0 ? 'Ready to explore' : s.current === 7 ? 'Forward pass complete' : 'Computed through ' + s.layers[s.current]?.id }} <span v-if="s.hookEnabled" class="hook-indicator">· code hook active</span></span><span>60,850 parameters <span class="separator">/</span> 7 layers <span class="separator">/</span> <span class="mono">{{ totalTime }} ms</span></span></div>
+            </div>
+
+            <div class="panel inspection-panel">
+              <div
+                class="inspection-heading"><div class="section-title"><span class="step-number">03</span><h2>Look inside <span class="layer-tag">{{ selectedLayer?.id }}</span></h2></div><span class="mono muted">{{ selectedLayer?.parameters.toLocaleString() }} parameters</span></div>
+              <p class="layer-description">{{ selectedLayer?.description }}</p>
+              <div class="inspection-content">
+                <div class="feature-side">
+                  <div
+                    class="small-label">{{ selectedLayer?.width === 1 ? 'ACTIVATION VECTOR · CLICK A UNIT' : 'FEATURE MAPS · SELECT A MAP' }}<span>{{ selectedLayer?.channels }} {{ selectedLayer?.width === 1 ? "units" : "maps" }}</span></div>
+                  <div v-if="selectedLayer?.width === 1" class="vector-wrap">
+                    <heat-map :values="selectedTensor?.data || []"
+                      :width="selectedLayer.id === 'F6' ? 12 : 10"
+                      :height="Math.ceil(selectedLayer.channels / (selectedLayer.id === 'F6' ? 12 : 10))"
+                      :min="selectedLayer.kind === 'output' ? 0 : -1.7159"
+                      :max="selectedLayer.kind === 'output' ? 1 : 1.7159"
+                      :selected="{ x: s.channel % (selectedLayer.id === 'F6' ? 12 : 10), y: Math.floor(s.channel / (selectedLayer.id === 'F6' ? 12 : 10)) }"
+                      @cell="selectUnit" label="Activation vector"></heat-map>
+                  </div>
+                  <div v-else
+                    class="map-gallery"><button v-for="channel in selectedLayer?.channels || 1" :key="channel" class="map-thumb" :class="{ active: s.channel === channel - 1 }" @click="chooseChannel(channel - 1)" :title="'Inspect map ' + (channel - 1)" :aria-label="'Inspect map ' + (channel - 1)"><heat-map :values="mapValues(channel - 1)" :width="selectedLayer?.width || 32" :height="selectedLayer?.height || 32" :interactive="false" :min="-1.7159" :max="1.7159"></heat-map><span>{{ String(channel - 1).padStart(2, "0") }}</span></button></div>
+                  <div
+                    class="heatmap-legend"><span>{{ selectedLayer?.kind === "output" ? "0" : "−1.72" }}</span><i></i><span>{{ selectedLayer?.kind === "output" ? "1" : "+1.72" }}</span></div>
+                  <p
+                    class="micro">{{ selectedLayer?.kind === 'output' ? 'Output vector uses a 0–1 scale.' : 'One shared color scale keeps maps comparable.' }}</p>
+                  <div
+                    class="challenge"><span>↳ TRY THIS</span><p>{{ challenge }}</p></div>
+                </div>
+                <div class="cell-side">
+                  <div
+                    class="cell-toolbar"><span class="small-label">{{ selectedLayer?.width === 1 ? 'UNIT ' + s.channel : 'MAP ' + String(s.channel).padStart(2, '0') }}<span v-if="selectedLayer?.width > 1">CELL [{{ s.x }}, {{ s.y }}]</span></span><button class="text-button" @click="s.zoomKey++" title="Reset zoom and pan">Reset view ↺</button></div>
+                  <div class="detail-map"
+                    v-if="selectedLayer?.width > 1"><heat-map :key="s.selected + '-' + s.channel + '-' + s.zoomKey" :values="mapValues(s.channel)" :width="selectedLayer.width" :height="selectedLayer.height" :selected="{x: s.x, y: s.y}" :min="-1.7159" :max="1.7159" @cell="selectCell" label="Selected feature map. Click a cell to inspect. Scroll to zoom; drag to pan."></heat-map><span class="map-help">SCROLL TO ZOOM · DRAG TO PAN · CLICK TO INSPECT</span></div>
+                  <div v-if="s.selected === 0"
+                    class="input-explanation"><span class="small-label">NORMALIZE A PIXEL</span><div class="equation">{{ fmt(s.pixels[s.y * 32 + s.x]) }} × 2 − 1 = <strong>{{ fmt(s.pixels[s.y * 32 + s.x] * 2 - 1) }}</strong></div><div v-if="s.hookEnabled && s.tensors[0]" class="hook-result">After your callback <strong>{{ fmt(selectedTensor?.data[s.y * 32 + s.x], 5) }}</strong></div><p class="micro">Dark background → −1 · bright stroke → +1. Select any pixel above.</p></div>
+                  <div v-else-if="s.detail" class="calculation">
+                    <div
+                      class="calculation-title"><span class="small-label">{{ selectedLayer.kind === 'pool' ? 'AVERAGE → SCALE → BIAS → TANH' : selectedLayer.kind === 'output' ? 'DOT PRODUCT → BIAS → SOFTMAX' : 'MULTIPLY → SUM → BIAS → TANH' }}</span><span class="mono muted">{{ s.detail.terms.length }} terms</span></div>
+                    <div
+                      v-if="selectedLayer.kind === 'conv' || selectedLayer.kind === 'pool'"
+                      class="patch-controls"><label>Input map <select v-model.number="s.sourceChannel"><option v-for="channel in s.detail.connections" :value="channel">{{ channel }}</option></select></label><span class="micro">{{ s.detail.connections.length }} connected map{{ s.detail.connections.length > 1 ? "s" : "" }}</span></div>
+                    <div class="patch-equation"
+                      v-if="selectedLayer.kind === 'conv' || selectedLayer.kind === 'pool'"><div><span class="micro">Input patch</span><div class="number-grid" :style="{gridTemplateColumns: 'repeat(' + (selectedLayer.kind === 'pool' ? 2 : 5) + ', 1fr)'}"><span v-for="(term, i) in visibleTerms" :key="i" :title="'Input [' + term.x + ', ' + term.y + '] = ' + term.input">{{ fmt(term.input, 2) }}</span></div></div><span class="operator">⊙</span><div><span class="micro">{{ selectedLayer.kind === "pool" ? "Scale ÷ 4" : "Filter weights" }}</span><div class="number-grid weights" :style="{gridTemplateColumns: 'repeat(' + (selectedLayer.kind === 'pool' ? 2 : 5) + ', 1fr)'}"><span v-for="(term, i) in visibleTerms" :key="i" :title="'Weight = ' + term.weight">{{ fmt(term.weight, 2) }}</span></div></div></div>
+                    <div v-else
+                      class="dense-terms"><span class="micro">First 4 of {{ s.detail.terms.length }} products; the sum includes every input.</span><code v-for="(term, i) in s.detail.terms.slice(0, 4)" :key="i">{{ fmt(term.input) }} × {{ fmt(term.weight) }} = {{ fmt(term.product) }}</code></div>
+                    <div
+                      class="sum-row"><span>Σ all {{ s.detail.terms.length }} products</span><strong>{{ fmt(s.detail.sum) }}</strong><span>+ bias</span><strong>{{ fmt(s.detail.bias) }}</strong></div>
+                    <div
+                      class="activation-row"><span>{{ selectedLayer.kind === 'output' ? 'softmax(z)[' + s.channel + ']' : '1.7159 × tanh(⅔ × ' + fmt(s.detail.preactivation) + ')' }}</span><strong>{{ fmt(s.detail.activation, 5) }}</strong></div>
+                    <div v-if="s.hookEnabled && selectedLayer.kind !== 'output'"
+                      class="hook-result">After your callback <strong>{{ fmt(selectedTensor?.data[s.channel * selectedLayer.width * selectedLayer.height + s.y * selectedLayer.width + s.x], 5) }}</strong></div>
+                    <p v-if="selectedLayer.kind === 'output'"
+                      class="micro">Softmax compares this logit with all ten logits: exp(z − max) / Σ exp(z − max).</p>
+                  </div>
+                  <div v-else
+                    class="empty-calculation">{{ s.tensors[s.selected] ? 'Loading the calculation…' : 'Run a step to reveal the actual calculation.' }}</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="bottom-grid">
+          <section class="panel output-panel">
+            <div
+              class="section-title"><span class="mini-icon">▥</span><h2>Output distribution</h2><span class="badge small">UNTRAINED</span></div>
+            <p
+              class="subtle">Ten scores, normalized with softmax. Watch how they change.</p>
+            <div class="score-chart">
+              <div v-for="digit in 10" :key="digit"
+                class="score-column"><span class="score-value">{{ scores ? (scores[digit - 1] * 100).toFixed(1) + "%" : "—" }}</span><div class="bar-track"><div class="score-bar" :style="{ height: scores ? Math.max(2, scores[digit - 1] * 100 / Math.max(...scores)) + '%' : '3%' }" :class="{ highest: scores && scores[digit - 1] === Math.max(...scores) }"></div></div><span class="digit-label">{{ digit - 1 }}</span></div>
+            </div>
+            <div
+              class="micro">{{ scores ? 'Bars scaled to the largest score. Percentages sum to 100%.' : 'Run the network to see the output distribution.' }}</div>
+          </section>
+          <section
+            class="panel hook-panel"><div class="section-title"><span class="mini-icon">⌘</span><h2>Make it your experiment</h2><span class="mono muted">JavaScript</span></div><p class="subtle">Edit an activation before it flows into the next layer.</p><div class="hook-presets"><button @click="preset('identity')">Identity</button><button @click="preset('relu')">Try ReLU</button><button @click="preset('ablate')">Silence map 0</button></div><label class="code-label" for="hook-code">afterActivation(value, index, layer) {</label><textarea id="hook-code" v-model="s.hookDraft" spellcheck="false" aria-label="Activation callback body"></textarea><div class="code-close">}</div><div class="hook-footer"><label class="check-label"><input type="checkbox" v-model="s.hookDraftEnabled"> Enable callback</label><button class="dark-button" @click="applyHook" :disabled="!s.connected">Apply & rerun ↗</button></div><p class="micro">Runs on Input through F6. <code>layer</code> includes id, width, height, channels. Return a finite number in [−100, 100].</p></section>
+        </div>
+
+        <section class="panel log-panel"><div class="log-heading"><div class="section-title"><span class="mini-icon">›_</span><h2>Activity</h2><span class="mono muted">CLIENT + SERVER</span></div><button class="text-button" @click="s.logs = []">Clear log</button></div><div class="log-lines" role="log" aria-live="polite"><div v-for="(log, i) in s.logs.slice(-8)" :key="i" class="log-line"><time>{{ log.time }}</time><span class="log-source" :class="log.source">{{ log.source }}</span><span>{{ log.message }}</span></div><span v-if="!s.logs.length" class="muted">No events yet.</span></div></section>
+        <footer>VISION LAB <span>Learn by changing one thing at a time.</span><details><summary>About this implementation</summary><p>The feature extractor follows LeNet-5: sparse C3 connectivity, learnable average subsampling, and scaled tanh. This teaching variant uses [−1, 1] input normalization and a dense + softmax output instead of the original Euclidean RBF head. All 60,850 parameters are initialized, not trained. Example digits are drawings, not MNIST samples. Training and pretrained weights are future work.</p></details></footer>
+      </main>
+    </div>
+    <noscript>This interactive lab requires JavaScript.</noscript>
+  </body>
+</html>

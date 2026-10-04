@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f6f2">
+    <title>Convolution · Vision Lab</title>
+    <link rel="stylesheet" href="/convolution/styles.css">
+    <script type="module" src="/convolution/app.js"></script>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <header class="topbar">
+        <a class="brand" href="/">◈ <strong>VISION</strong>LAB</a>
+        <nav
+          aria-label="Labs"><a href="/">LeNet-5</a><a href="/convolution/" aria-current="page">Convolution</a></nav>
+        <span class="connection"
+          :class="{ online: s.connected }"><i></i>{{ s.connected ? "Server connected" : "Reconnecting…" }}</span>
+      </header>
+      <main>
+        <div class="heading">
+          <div>
+            <div
+              class="eyebrow">EXPLORATION 02 <span>/</span> THE BUILDING BLOCKS</div>
+            <h1>One filter. A whole new image<span>.</span></h1>
+            <p>Slide a small grid over an image. Multiply, add, and see what it finds.</p>
+          </div>
+          <button class="example-button" @click="loadSample('tiny')"
+            title="Load nine pixels for a single, readable calculation">↳ Start with a 3 × 3 example</button>
+        </div>
+
+        <div class="error" v-if="s.error"
+          role="alert"><span>{{ s.error }}</span><button @click="s.error = ''" aria-label="Dismiss error">×</button></div>
+
+        <section class="playback panel" aria-label="Convolution playback">
+          <div
+            class="play-buttons"><button class="primary" @click="play" :disabled="!ready">{{ s.playing ? 'Ⅱ Pause' : s.cursor === total - 1 && total ? '↻ Replay' : '▶ Run convolution' }}</button><button @click="step" :disabled="!ready || s.cursor >= total - 1" title="Compute the next output pixel">↦ Step</button><button @click="reset" :disabled="!ready" aria-label="Reset scan" title="Return the kernel to the first window">↺</button><button class="text-button" @click="finish" :disabled="!ready" title="Reveal the entire result, then select any pixel to inspect it">Show result ↗</button></div>
+          <label
+            class="speed">Speed <input type="range" min="1" max="60" step="1" v-model.number="s.speed" aria-label="Playback speed"><span>{{ s.speed }} cells/s</span></label>
+        </section>
+
+        <div class="workspace">
+          <section class="panel image-panel">
+            <div
+              class="section-title"><span class="number">01</span><h2>Input image</h2><span class="tag">{{ s.size }} × {{ s.size }} × 1</span></div>
+            <div
+              class="image-meta"><span :title="s.inputName">{{ s.inputName }}</span><button class="text-button" @click="s.zoomKey++" title="Reset zoom and pan on both images">Reset view ↺</button></div>
+            <div class="canvas-wrap">
+              <pixel-map :key="'input-' + s.zoomKey" :values="s.pixels"
+                :size="s.size" :padding="s.padding" :overlay="overlay"
+                @cell="selectInput"
+                label="Input image with moving kernel. Scroll to zoom, drag to pan, click to position the kernel."></pixel-map>
+            </div>
+            <div
+              class="image-legend"><span><i class="kernel-swatch"></i>Kernel window</span><span v-if="s.padding"><i class="padding-swatch"></i>Zero padding</span><span v-else>Black 0 → white 1</span></div>
+            <div class="sample-buttons"
+              aria-label="Input examples"><button v-for="(name, key) in { shapes: 'Shapes', edge: 'Edge', checker: 'Checker', gradient: 'Gradient' }" :key="key" @click="loadSample(key)" :class="{ active: s.sample === key }">{{ name }}</button></div>
+            <div
+              class="input-controls"><label class="button upload">↥ {{ s.uploadBusy ? "Loading…" : "Upload image" }}<input type="file" accept="image/png,image/jpeg,image/webp" @change="upload" aria-label="Upload input image"></label><label class="inline-field">Size <select :value="s.size" @change="resizeInput" aria-label="Input size"><option :value="3">3 × 3</option><option :value="8">8 × 8</option><option :value="16">16 × 16</option><option :value="32">32 × 32</option><option :value="64">64 × 64</option></select></label></div>
+            <p
+              class="micro">Scroll to zoom · drag to pan · click to move the window</p>
+          </section>
+
+          <section class="panel kernel-panel">
+            <div
+              class="section-title"><span class="number">02</span><h2>Kernel / filter</h2><span class="tag">{{ s.kernelSize }} × {{ s.kernelSize }}</span></div>
+            <label class="field-label"
+              for="filter-preset">START WITH A FILTER</label>
+            <select id="filter-preset" :value="s.preset"
+              @change="preset($event.target.value)"><option v-for="(item, key) in presets" :value="key">{{ item.name }}</option><option value="custom" disabled>Custom filter</option></select>
+            <p
+              class="micro kernel-intro">Each cell is a weight. Click a number to change it.</p>
+            <div class="kernel-grid"
+              :style="{ gridTemplateColumns: 'repeat(' + s.kernelSize + ', minmax(0, 1fr))' }">
+              <input v-for="(value, i) in s.kernel"
+                :key="s.kernelSize + '-' + i" type="number" min="-100" max="100"
+                step="any" :value="value" @input="editKernel(i, $event)"
+                :aria-label="'Kernel row ' + (Math.floor(i / s.kernelSize) + 1) + ' column ' + (i % s.kernelSize + 1)"
+                :class="{ negative: value < 0, positive: value > 0 }"
+                :title="'Weight [' + Math.floor(i / s.kernelSize) + ', ' + (i % s.kernelSize) + '] = ' + value">
+            </div>
+            <div
+              class="kernel-summary"><span>Σ weights</span><strong>{{ fmt(s.kernel.every(v => typeof v === 'number') ? s.kernel.reduce((a, b) => a + b, 0) : NaN) }}</strong></div>
+            <div class="settings">
+              <label>Kernel size<select :value="s.kernelSize" @change="resizeKernel" aria-label="Kernel size"><option v-for="n in [1,3,5,7]" :value="n">{{ n }} × {{ n }}</option></select></label>
+              <label
+                title="How many input pixels the kernel moves each step">Stride<select v-model.number="s.stride" @change="invalidate" aria-label="Stride"><option v-for="n in [1,2,3,4]" :value="n">{{ n }} px</option></select></label>
+              <label
+                title="Add zeros to every side of the image">Padding<select v-model.number="s.padding" @change="invalidate" aria-label="Padding"><option :value="0">None</option><option v-for="n in [1,2,3]" :value="n">{{ n }} px</option></select></label>
+            </div>
+            <p
+              class="micro">Stride moves the window. Padding adds a border of zeros.</p>
+          </section>
+
+          <section class="panel image-panel output-panel">
+            <div
+              class="section-title"><span class="number">03</span><h2>Output feature map</h2><span class="tag">{{ shape > 0 ? shape + " × " + shape : "—" }}</span></div>
+            <div
+              class="image-meta"><span>{{ s.pending ? 'Updating calculation…' : s.playing ? 'Scanning the image…' : s.revealed === total && total ? 'Scan complete. Explore any cell.' : s.revealed ? 'Paused. Inspect or continue.' : 'Ready for the first window' }}</span></div>
+            <div class="canvas-wrap output-canvas">
+              <pixel-map :key="'output-' + s.zoomKey" :values="s.output"
+                :size="Math.max(1, shape)" :revealed="s.revealed"
+                :selected="s.cursor >= 0 && detail ? { x: detail.x, y: detail.y } : null"
+                :signed="true" :scale="scale" @cell="selectCell"
+                label="Output feature map. Click or use arrow keys to inspect an output cell. Scroll to zoom and drag to pan."></pixel-map>
+            </div>
+            <div
+              class="color-legend"><span>{{ fmt(-scale) }}</span><i></i><span>0</span><i></i><span>+{{ fmt(scale) }}</span></div>
+            <div
+              class="progress-heading"><span>{{ s.revealed.toLocaleString() }} / {{ total.toLocaleString() }} pixels revealed</span><strong>{{ total ? Math.round(s.revealed / total * 100) : 0 }}%</strong></div>
+            <progress :value="s.revealed" :max="total || 1"
+              aria-label="Convolution scan progress"></progress>
+            <p
+              class="micro">Click a cell to jump to its window. Colors use the full result’s symmetric range; values are never clipped.</p>
+            <div class="try-this"><span>TRY THIS</span><p>{{ hint }}</p></div>
+          </section>
+        </div>
+
+        <div
+          class="shape-rule"><span class="field-label">OUTPUT SIZE, EACH AXIS</span><code>⌊(N + 2P − K) / S⌋ + 1</code><span>=</span><code>⌊({{ s.size }} + 2·{{ s.padding }} − {{ s.kernelSize }}) / {{ s.stride }}⌋ + 1</code><strong>= {{ shape }}</strong><span class="micro">N input · P padding · K kernel · S stride</span></div>
+
+        <section class="panel calculation-panel">
+          <div
+            class="section-title"><span class="number">↳</span><h2>Inside one output pixel</h2><span class="tag" v-if="detail">row {{ detail.y }}, column {{ detail.x }} · zero-based</span></div>
+          <p
+            class="subtle">{{ s.cursor < 0 ? 'Preview the first window, then press Step to write its result.' : 'Every output pixel is the sum of these element-by-element products.' }} Hover or focus a cell to follow a single multiplication.</p>
+          <div v-if="detail" class="calculation-content">
+            <div class="matrix-equation"
+              :class="{ 'large-kernel': s.kernelSize >= 5 }">
+              <div class="matrix-block">
+                <div class="field-label">INPUT PATCH</div>
+                <div class="number-grid"
+                  :style="{ gridTemplateColumns: 'repeat(' + s.kernelSize + ', minmax(0, 1fr))' }"><button v-for="(term, i) in detail.terms" :key="i" @mouseenter="s.hoveredTerm = i" @mouseleave="s.hoveredTerm = -1" @focus="s.hoveredTerm = i" @blur="s.hoveredTerm = -1" :class="{ padded: term.padded, highlighted: s.hoveredTerm === i }" :title="term.padded ? 'Padding: 0 outside the image' : 'Input row ' + term.inputY + ', column ' + term.inputX + ': ' + term.input">{{ fmt(term.input) }}</button></div>
+              </div>
+              <span class="operator"
+                title="Element-by-element multiplication">⊙</span>
+              <div class="matrix-block">
+                <div
+                  class="field-label">{{ s.flip ? "KERNEL · ROTATED 180°" : "KERNEL WEIGHTS" }}</div>
+                <div class="number-grid weights"
+                  :style="{ gridTemplateColumns: 'repeat(' + s.kernelSize + ', minmax(0, 1fr))' }"><button v-for="(term, i) in detail.terms" :key="i" @mouseenter="s.hoveredTerm = i" @mouseleave="s.hoveredTerm = -1" @focus="s.hoveredTerm = i" @blur="s.hoveredTerm = -1" :class="{ highlighted: s.hoveredTerm === i }" :title="String(term.weight)">{{ fmt(term.weight) }}</button></div>
+              </div>
+              <span class="operator">=</span>
+              <div class="matrix-block">
+                <div class="field-label">PRODUCTS</div>
+                <div class="number-grid products"
+                  :style="{ gridTemplateColumns: 'repeat(' + s.kernelSize + ', minmax(0, 1fr))' }"><button v-for="(term, i) in detail.terms" :key="i" @mouseenter="s.hoveredTerm = i" @mouseleave="s.hoveredTerm = -1" @focus="s.hoveredTerm = i" @blur="s.hoveredTerm = -1" :class="{ highlighted: s.hoveredTerm === i }" :title="term.input + ' × ' + term.weight + ' = ' + term.product">{{ fmt(term.product) }}</button></div>
+              </div>
+            </div>
+            <div
+              class="sum-card"><span class="field-label">ADD ALL {{ detail.terms.length }} PRODUCTS</span><div class="sum-value"><span>Σ =</span> <strong>{{ fmt(detail.sum) }}</strong></div><code>output[{{ detail.y }}, {{ detail.x }}]</code><p class="micro">Raw weighted sum. No bias, activation, or automatic normalization.</p></div>
+            <div class="term-detail" aria-live="polite">
+              <template
+                v-if="s.hoveredTerm >= 0"><span>{{ detail.terms[s.hoveredTerm].padded ? 'Zero-padding cell' : 'Input [' + detail.terms[s.hoveredTerm].inputY + ', ' + detail.terms[s.hoveredTerm].inputX + ']' }}</span><code>{{ fmt(detail.terms[s.hoveredTerm].input) }} × {{ fmt(detail.terms[s.hoveredTerm].weight) }} = {{ fmt(detail.terms[s.hoveredTerm].product) }}</code></template>
+              <template
+                v-else><span>{{ detail.terms.filter((t) => t.padded).length }} zero-padding cells in this window</span><span>Numbers shown to 4 decimals; calculations keep full precision.</span></template>
+            </div>
+          </div>
+          <p v-else
+            class="empty">{{ s.error ? 'Fix the configuration above to inspect the calculation.' : 'Connecting and preparing the first window…' }}</p>
+        </section>
+
+        <div class="bottom-grid">
+          <section
+            class="panel callback-panel"><div class="section-title"><span class="number">⌘</span><h2>Write your own filter</h2><span class="tag">JAVASCRIPT</span></div><p class="subtle">Generate every kernel weight with a callback. Apply it, then step through the result.</p><div class="callback-presets"><button @click="callbackPreset('blur')">Box blur</button><button @click="callbackPreset('identity')">Identity</button><button @click="callbackPreset('edge')">Edge gradient</button></div><label class="code-label" for="kernel-code">weight(value, row, col, size) {</label><textarea id="kernel-code" v-model="s.hookDraft" spellcheck="false" aria-label="Kernel callback body"></textarea><div class="code-close">}</div><div class="callback-footer"><span class="micro">Zero-based row / col. Return a number in [−100, 100].</span><button class="primary" @click="applyHook" :disabled="s.hookBusy">{{ s.hookBusy ? "Applying…" : "Apply callback ↗" }}</button></div><p class="micro">Runs once per cell when applied. Editing the draft leaves the current filter in place.</p></section>
+          <section class="panel learning-panel"><div class="section-title"><span class="number">?</span><h2>What are we computing?</h2></div><ol><li><strong>Take a patch.</strong> Place the kernel over the image, including any padded zeros.</li><li><strong>Multiply and add.</strong> Pair each pixel with its weight. Sum all products into one output cell.</li><li><strong>Slide and repeat.</strong> Move by the stride. At the end of a row, return left and move down.</li></ol><label class="flip-control"><input type="checkbox" v-model="s.flip" @change="invalidate"> Flip kernel 180° (mathematical convolution)</label><p class="micro">{{ s.flip ? 'The calculation uses the editor’s kernel rotated 180°. Try an asymmetric filter to see the difference.' : 'Like CNN libraries, the default uses cross-correlation: the kernel is not flipped. It is commonly called convolution.' }}</p><a class="reference" href="https://docs.pytorch.org/docs/stable/generated/torch.nn.Conv2d.html" target="_blank" rel="noreferrer">Reference: Conv2d definition & output shape ↗</a></section>
+        </div>
+
+        <details class="panel activity"><summary>›_ Activity <span>Client + server · {{ s.logs.length }} events</span></summary><div class="log-lines" role="log"><div v-for="(entry, i) in s.logs.slice(-8)" :key="i"><time>{{ entry.time }}</time><span class="log-source">{{ entry.source }}</span><span>{{ entry.message }}</span></div></div></details>
+        <footer><span>VISION LAB</span><span>Learn by changing one thing at a time.</span><a href="/">Explore LeNet-5 ↗</a></footer>
+      </main>
+    </div>
+    <noscript>This interactive lab requires JavaScript.</noscript>
+  </body>
+</html>

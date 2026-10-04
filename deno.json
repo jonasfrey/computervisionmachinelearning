@@ -1,0 +1,13 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": { "vue": "npm:vue@3.5.43" },
+  "tasks": {
+    "start": "deno run --allow-read --allow-net=127.0.0.1,localhost --allow-env=PORT LeNet-5/server.ts",
+    "test": "deno test LeNet-5/tests/ Convolution/tests/",
+    "test:browser": "deno run --allow-read --allow-write=/tmp --allow-net=127.0.0.1,localhost --allow-env --allow-run --allow-sys LeNet-5/tests/browser_smoke.js",
+    "test:convolution:browser": "deno run --allow-read --allow-write=/tmp --allow-net=127.0.0.1,localhost --allow-env --allow-run --allow-sys Convolution/tests/browser_smoke.js",
+    "check": "deno fmt --check && deno lint && deno check LeNet-5/server.ts LeNet-5/tests/*.ts Convolution/tests/*.ts"
+  },
+  "fmt": { "exclude": ["hgc/"] },
+  "lint": { "exclude": ["hgc/"] }
+}
