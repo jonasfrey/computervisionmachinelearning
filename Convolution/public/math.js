@@ -17,7 +17,7 @@ export function validate(config) {
   }
   for (
     const [name, value, min, max] of [
-      ["Input size", config.size, 3, 64],
+      ["Input size", config.size, 3, 512],
       ["Kernel size", config.kernelSize, 1, 7],
       ["Stride", config.stride, 1, 4],
       ["Padding", config.padding, 0, 3],
@@ -98,9 +98,28 @@ export function inspect(config, index) {
 export function convolve(config) {
   validate(config);
   const size = outputSize(config);
-  const values = Array.from(
-    { length: size ** 2 },
-    (_, i) => inspect(config, i).sum,
-  );
+  const values = new Array(size ** 2);
+  const { pixels, kernel, kernelSize, stride, padding } = config;
+  // Keep the same accumulation order as inspect, without allocating millions
+  // of per-product objects for photographic inputs.
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let sum = 0;
+      for (let row = 0; row < kernelSize; row++) {
+        const inputY = y * stride + row - padding;
+        for (let col = 0; col < kernelSize; col++) {
+          const inputX = x * stride + col - padding;
+          const input = inputX < 0 || inputY < 0 || inputX >= config.size ||
+              inputY >= config.size
+            ? 0
+            : pixels[inputY * config.size + inputX];
+          const index = row * kernelSize + col;
+          sum += input *
+            kernel[config.flip ? kernel.length - 1 - index : index];
+        }
+      }
+      values[y * size + x] = sum;
+    }
+  }
   return { size, values };
 }

@@ -7,6 +7,9 @@ const files: Record<string, [string, string]> = {
   "/convolution/math.js": ["math.js", "text/javascript"],
   "/convolution/styles.css": ["styles.css", "text/css"],
   "/convolution/kernel-worker.js": ["kernel-worker.js", "text/javascript"],
+  "/convolution/pixel-map.js": ["pixel-map.js", "text/javascript"],
+  "/convolution/images/cat.png": ["images/cat.png", "image/png"],
+  "/convolution/images/coffee.png": ["images/coffee.png", "image/png"],
 };
 
 export async function handler(request: Request): Promise<Response> {
@@ -24,8 +27,8 @@ export async function handler(request: Request): Promise<Response> {
     socket.onmessage = (event) => {
       let requestId: unknown;
       try {
-        if (typeof event.data !== "string" || event.data.length > 150_000) {
-          throw new Error("Expected JSON text under 150 KB.");
+        if (typeof event.data !== "string" || event.data.length > 6_000_000) {
+          throw new Error("Expected JSON text under 6 MB.");
         }
         const message = JSON.parse(event.data);
         if (!message || typeof message !== "object" || Array.isArray(message)) {

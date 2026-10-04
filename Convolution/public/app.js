@@ -1,13 +1,13 @@
 import {
   computed,
   createApp,
+  markRaw,
   onMounted,
   onUnmounted,
   reactive,
-  ref,
-  watch,
 } from "/vue.js";
 import { inspect, outputSize, validate } from "./math.js";
+import PixelMap from "./pixel-map.js";
 
 const presets = {
   edge: {
@@ -41,6 +41,59 @@ const presets = {
       "Only the center contributes. Set padding to 1 to keep the original image size.",
   },
 };
+
+const photos = {
+  cat: {
+    name: "Chelsea the cat",
+    author: "Stefan van der Walt",
+    source: "chelsea",
+  },
+  coffee: { name: "Coffee cup", author: "Rachel Michetti", source: "coffee" },
+};
+const lessons = [
+  {
+    title: "A pixel is a brightness value",
+    text:
+      "A grayscale image is a grid of numbers. In an 8-bit image, 0 is black and 255 is white. This lab divides those numbers by 255, so its pixels range from 0 to 1.",
+    task:
+      "Select a square, then change its brightness. Notice how the number and the shade change together.",
+  },
+  {
+    title: "One pixel × one weight",
+    text:
+      "A kernel is a small grid of weights. Start with just one: this 1 × 1 kernel multiplies each input pixel by its weight. The input here is 0.5; a weight of 1 gives 0.5, a middle gray.",
+    task:
+      "Change the kernel weight to 2, then press Step. The sum becomes 1, which displays as white. Try 0 to make it black.",
+  },
+  {
+    title: "Multiply nine pairs, then add",
+    text:
+      "This patch has four white pixels and five black pixels. The averaging kernel has nine weights of 1/9. Its weights sum to 1, but the output is the sum of pixel × weight products: four contributions of 1/9 give 4/9 ≈ 0.4444.",
+    task:
+      "Compare the average with a kernel of all ones. A sum of 4 is brighter than the display can show, so grayscale clips it to white. The raw sum remains 4.",
+  },
+  {
+    title: "Slide the same kernel across an image",
+    text:
+      "Every window makes one output pixel. The same weights move from left to right, then start the next row. This center-only kernel copies the middle pixel of each 3 × 3 patch.",
+    task:
+      "Use Step or Run to follow the window. Change stride from 1 to 2: the window jumps farther and the output shrinks from 6 × 6 to 3 × 3.",
+  },
+  {
+    title: "Padding supplies the missing neighbors",
+    text:
+      "At the border, some neighbors lie outside the image. Zero padding supplies black pixels there. In this all-white example, the blur averages four real pixels and five zeros at a corner: 4/9. The center averages nine white pixels: 1.",
+    task:
+      "Press Step to see the corner, then click the center output cell. Compare gray with white. Remove padding to see why only one complete window remains.",
+  },
+  {
+    title: "Apply it to a photograph",
+    text:
+      "The same calculation works on a large image. Instant mode reveals every output as soon as it is ready, including after a filter or callback change. Choose grayscale to see a filtered photo, or signed colors to inspect negative and positive responses.",
+    task:
+      "Try blur, sharpen, and edge filters on the cat. Switch to 512 × 512, then write your own weights below. Zoom into a feature and inspect the numbers behind it.",
+  },
+];
 
 function samplePixels(name, size) {
   return Array.from({ length: size * size }, (_, i) => {
@@ -84,6 +137,11 @@ export const store = reactive({
   hookBusy: false,
   logs: [],
   uploadBusy: false,
+  instant: false,
+  displayMode: "signed",
+  lesson: -1,
+  lessonPixel: 4,
+  quizAnswer: "",
 });
 
 export function fmt(value) {
@@ -91,202 +149,7 @@ export function fmt(value) {
   return Math.abs(value) < 0.0000001 ? "0" : String(Number(value.toFixed(4)));
 }
 
-const PixelMap = {
-  props: {
-    values: Array,
-    size: Number,
-    padding: { default: 0 },
-    overlay: Object,
-    selected: Object,
-    revealed: { default: Infinity },
-    signed: Boolean,
-    scale: { default: 1 },
-    label: String,
-  },
-  emits: ["cell"],
-  setup(props, { emit }) {
-    const canvas = ref(null);
-    let zoom = 1, panX = 0, panY = 0, drag = null;
-    const dimension = () => props.size + 2 * props.padding;
-    function draw() {
-      if (!canvas.value) return;
-      const ctx = canvas.value.getContext("2d");
-      const cell = 640 / dimension();
-      ctx.fillStyle = "#e9ece4";
-      ctx.fillRect(0, 0, 640, 640);
-      ctx.save();
-      ctx.translate(panX, panY);
-      ctx.scale(zoom, zoom);
-      for (let y = 0; y < dimension(); y++) {
-        for (let x = 0; x < dimension(); x++) {
-          const px = x - props.padding, py = y - props.padding;
-          const padded = px < 0 || py < 0 || px >= props.size ||
-            py >= props.size;
-          const index = py * props.size + px;
-          const value = props.values?.[index];
-          const hidden = index >= props.revealed || !Number.isFinite(value);
-          if (padded) ctx.fillStyle = (x + y) % 2 ? "#bcc8b0" : "#cdd6c4";
-          else if (hidden) ctx.fillStyle = (x + y) % 2 ? "#e8ece4" : "#e3e8de";
-          else if (props.signed) {
-            const t = Math.min(1, Math.abs(value) / props.scale);
-            const end = value < 0 ? [42, 117, 134] : [192, 115, 47];
-            ctx.fillStyle = `rgb(${
-              end.map((v) => Math.round(247 + (v - 247) * t)).join(",")
-            })`;
-          } else {
-            const v = Math.round(value * 255);
-            ctx.fillStyle = `rgb(${v},${v},${v})`;
-          }
-          ctx.fillRect(x * cell, y * cell, cell + 0.3, cell + 0.3);
-          if (dimension() <= 10 || zoom >= 2) {
-            ctx.strokeStyle = props.signed || padded
-              ? "#b9c2b350"
-              : "#88888860";
-            ctx.lineWidth = 0.6 / zoom;
-            ctx.strokeRect(x * cell, y * cell, cell, cell);
-          }
-          if (cell * zoom > 43 && !hidden && !padded) {
-            ctx.fillStyle = props.signed || value > 0.5 ? "#1b2925" : "#eeeeee";
-            ctx.font = `${Math.min(22, cell * 0.24)}px monospace`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(
-              fmt(value),
-              (x + 0.5) * cell,
-              (y + 0.5) * cell,
-              cell * 0.9,
-            );
-          }
-        }
-      }
-      if (props.overlay) {
-        const { x, y, size, term } = props.overlay;
-        ctx.fillStyle = "#d5ed922a";
-        ctx.fillRect(x * cell, y * cell, size * cell, size * cell);
-        ctx.strokeStyle = "#d5ed92";
-        ctx.lineWidth = 1.5 / zoom;
-        for (let row = 0; row < size; row++) {
-          for (let col = 0; col < size; col++) {
-            ctx.strokeRect((x + col) * cell, (y + row) * cell, cell, cell);
-          }
-        }
-        ctx.lineWidth = 3 / zoom;
-        ctx.strokeRect(x * cell, y * cell, size * cell, size * cell);
-        if (term >= 0) {
-          ctx.fillStyle = "#d5ed9277";
-          ctx.fillRect(
-            (x + term % size) * cell,
-            (y + Math.floor(term / size)) * cell,
-            cell,
-            cell,
-          );
-        }
-      }
-      if (props.selected) {
-        const { x, y } = props.selected;
-        ctx.lineWidth = 4 / zoom;
-        ctx.strokeStyle = "#253d2b";
-        ctx.strokeRect(
-          x * cell + 1 / zoom,
-          y * cell + 1 / zoom,
-          cell - 2 / zoom,
-          cell - 2 / zoom,
-        );
-      }
-      ctx.restore();
-    }
-    function point(event) {
-      const box = canvas.value.getBoundingClientRect();
-      return {
-        x: (event.clientX - box.left) * 640 / box.width,
-        y: (event.clientY - box.top) * 640 / box.height,
-      };
-    }
-    function wheel(event) {
-      event.preventDefault();
-      const p = point(event),
-        next = Math.max(
-          1,
-          Math.min(12, zoom * Math.exp(-event.deltaY * 0.002)),
-        );
-      panX = p.x - (p.x - panX) * next / zoom;
-      panY = p.y - (p.y - panY) * next / zoom;
-      zoom = next;
-      if (zoom === 1) panX = panY = 0;
-      draw();
-    }
-    function down(event) {
-      const p = point(event);
-      drag = { ...p, lastX: p.x, lastY: p.y, moved: false };
-      canvas.value.setPointerCapture(event.pointerId);
-    }
-    function move(event) {
-      if (!drag) return;
-      const p = point(event);
-      if (Math.hypot(p.x - drag.x, p.y - drag.y) > 5) drag.moved = true;
-      if (drag.moved) {
-        panX += p.x - drag.lastX;
-        panY += p.y - drag.lastY;
-        draw();
-      }
-      drag.lastX = p.x;
-      drag.lastY = p.y;
-    }
-    function up(event) {
-      if (!drag) return;
-      if (!drag.moved) {
-        const p = point(event), cell = 640 / dimension();
-        const x = Math.floor((p.x - panX) / zoom / cell) - props.padding;
-        const y = Math.floor((p.y - panY) / zoom / cell) - props.padding;
-        if (x >= 0 && y >= 0 && x < props.size && y < props.size) {
-          emit("cell", { x, y });
-        }
-      }
-      drag = null;
-    }
-    function keyboard(event) {
-      const offsets = {
-        ArrowLeft: [-1, 0],
-        ArrowRight: [1, 0],
-        ArrowUp: [0, -1],
-        ArrowDown: [0, 1],
-      };
-      if (!offsets[event.key]) return;
-      event.preventDefault();
-      const current = props.selected || { x: 0, y: 0 },
-        [dx, dy] = offsets[event.key];
-      emit("cell", {
-        x: Math.max(0, Math.min(props.size - 1, current.x + dx)),
-        y: Math.max(0, Math.min(props.size - 1, current.y + dy)),
-      });
-    }
-    onMounted(draw);
-    watch(
-      () => [
-        props.values,
-        props.size,
-        props.padding,
-        props.overlay,
-        props.selected,
-        props.revealed,
-        props.scale,
-      ],
-      draw,
-      { deep: true },
-    );
-    return {
-      canvas,
-      wheel,
-      down,
-      move,
-      up,
-      keyboard,
-      cancel: () => drag = null,
-    };
-  },
-  template:
-    `<canvas ref="canvas" width="640" height="640" tabindex="0" :aria-label="label" @wheel="wheel" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="cancel" @lostpointercapture="cancel" @keydown="keyboard"></canvas>`,
-};
+const grayByte = (value) => Math.round(Math.max(0, Math.min(1, value)) * 255);
 
 createApp({
   components: { PixelMap },
@@ -300,7 +163,7 @@ createApp({
       uploadId = 0,
       disposed = false,
       cancelHook;
-    let submitted;
+    let submitted, imageSource = null;
     const config = () => ({
       size: s.size,
       pixels: [...s.pixels],
@@ -314,11 +177,18 @@ createApp({
       s.resultConfig ? inspect(s.resultConfig, Math.max(0, s.cursor)) : null
     );
     const ready = computed(() =>
-      s.connected && !s.pending && !s.hookBusy && !!s.output.length
+      s.connected && !s.pending && !s.hookBusy && !s.uploadBusy &&
+      !!s.output.length
     );
     const total = computed(() => s.output.length);
-    const scale = computed(() => Math.max(0.000001, ...s.output.map(Math.abs)));
-    const shape = computed(() => outputSize(config()));
+    const scale = computed(() =>
+      s.output.reduce((max, value) => Math.max(max, Math.abs(value)), 0.000001)
+    );
+    const shape = computed(() => outputSize(s));
+    const lesson = computed(() => lessons[s.lesson]);
+    const exploring = computed(() =>
+      s.lesson < 0 || s.lesson === lessons.length - 1
+    );
     const overlay = computed(() =>
       detail.value
         ? ({
@@ -399,9 +269,10 @@ createApp({
             return;
           }
           if (message.type !== "result") return;
-          s.output = message.values;
+          s.output = markRaw(message.values);
           s.outputSize = message.size;
-          s.resultConfig = submitted;
+          s.resultConfig = markRaw(submitted);
+          if (s.instant) reveal();
           log(
             `${s.size} × ${s.size} → ${message.size} × ${message.size}; ${message.values.length} cells computed in ${
               message.elapsed.toFixed(1)
@@ -470,9 +341,21 @@ createApp({
     }
     function finish() {
       pause();
+      reveal();
+      log("Full output revealed. Select a pixel to inspect its calculation.");
+    }
+    function reveal() {
       s.cursor = total.value - 1;
       s.revealed = total.value;
-      log("Full output revealed. Select a pixel to inspect its calculation.");
+    }
+    function instantConvolve() {
+      s.instant = true;
+      pause();
+      if (ready.value) finish();
+    }
+    function toggleInstant() {
+      pause();
+      if (s.instant && ready.value) finish();
     }
     function selectCell({ x, y }) {
       if (!ready.value) return;
@@ -505,6 +388,8 @@ createApp({
     function loadSample(name) {
       uploadId++;
       s.uploadBusy = false;
+      imageSource?.close();
+      imageSource = null;
       if (name === "tiny") {
         s.size = 3;
         s.stride = 1;
@@ -514,7 +399,7 @@ createApp({
         s.preset = "edge";
       } else if (s.size === 3) s.size = 32;
       s.sample = name;
-      s.pixels = samplePixels(name, s.size);
+      s.pixels = markRaw(samplePixels(name, s.size));
       s.inputName = {
         shapes: "Geometric shapes",
         edge: "Vertical edge",
@@ -531,18 +416,25 @@ createApp({
       s.size = Number(event.target.value);
       uploadId++;
       s.uploadBusy = false;
-      s.pixels = Array.from(
-        { length: s.size ** 2 },
-        (_, i) =>
-          oldPixels[
-            Math.min(
-                oldSize - 1,
-                Math.floor(Math.floor(i / s.size) * oldSize / s.size),
-              ) * oldSize +
-            Math.min(oldSize - 1, Math.floor(i % s.size * oldSize / s.size))
-          ],
-      );
-      s.sample = "";
+      s.pixels = imageSource
+        ? pixelsFromImage(imageSource, s.size)
+        : s.sample && s.sample !== "tiny"
+        ? markRaw(samplePixels(s.sample, s.size))
+        : markRaw(Array.from(
+          { length: s.size ** 2 },
+          (_, i) =>
+            oldPixels[
+              Math.min(
+                  oldSize - 1,
+                  Math.floor(Math.floor(i / s.size) * oldSize / s.size),
+                ) * oldSize +
+              Math.min(oldSize - 1, Math.floor(i % s.size * oldSize / s.size))
+            ],
+        ));
+      if (s.sample === "tiny") {
+        s.sample = "";
+        s.inputName = "Resized worked example";
+      }
       s.zoomKey++;
       invalidate();
     }
@@ -631,12 +523,75 @@ createApp({
         s.hookBusy = false;
       }
     }
-    async function upload(event) {
+    function pixelsFromImage(bitmap, size) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, size, size);
+      const ratio = Math.min(size / bitmap.width, size / bitmap.height);
+      const w = bitmap.width * ratio, h = bitmap.height * ratio;
+      ctx.drawImage(bitmap, (size - w) / 2, (size - h) / 2, w, h);
+      const data = ctx.getImageData(0, 0, size, size).data;
+      return markRaw(
+        Array.from({ length: size ** 2 }, (_, i) =>
+          Math.min(
+            1,
+            (0.2126 * data[4 * i] + 0.7152 * data[4 * i + 1] +
+              0.0722 * data[4 * i + 2]) / 255,
+          )),
+      );
+    }
+    async function loadImage(readBlob, name, sample, size) {
+      const id = ++uploadId;
+      s.error = "";
+      s.uploadBusy = true;
+      pause();
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(await readBlob());
+        if (id !== uploadId || disposed) return;
+        const pixels = pixelsFromImage(bitmap, size);
+        imageSource?.close();
+        imageSource = bitmap;
+        bitmap = null;
+        s.size = size;
+        s.pixels = pixels;
+        s.inputName = name;
+        s.sample = sample;
+        s.displayMode = "grayscale";
+        s.zoomKey++;
+        invalidate();
+        log(
+          `Loaded ${name} at ${size} × ${size}; grayscale [0, 1], aspect ratio preserved with black margins.`,
+        );
+      } catch {
+        if (id === uploadId) {
+          s.error =
+            "This image could not be loaded. Try another image or sample.";
+        }
+      } finally {
+        bitmap?.close();
+        if (id === uploadId) s.uploadBusy = false;
+      }
+    }
+    function loadPhoto(name, size = Math.max(256, s.size)) {
+      return loadImage(
+        async () => {
+          const response = await fetch(`/convolution/images/${name}.png`);
+          if (!response.ok) throw new Error("Photo unavailable");
+          return response.blob();
+        },
+        photos[name].name,
+        name,
+        size,
+      );
+    }
+    function upload(event) {
       const file = event.target.files?.[0];
       event.target.value = "";
       if (!file) return;
-      const id = ++uploadId;
-      s.error = "";
+      uploadId++;
       s.uploadBusy = false;
       if (
         !/^image\/(png|jpeg|webp)$/.test(file.type) ||
@@ -645,46 +600,74 @@ createApp({
         s.error = "Choose a PNG, JPEG, or WebP image smaller than 10 MB.";
         return;
       }
-      s.uploadBusy = true;
-      let bitmap;
-      try {
-        bitmap = await createImageBitmap(file);
-        if (id !== uploadId) return;
-        const canvas = document.createElement("canvas");
-        canvas.width = canvas.height = s.size;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "black";
-        ctx.fillRect(0, 0, s.size, s.size);
-        const ratio = Math.min(s.size / bitmap.width, s.size / bitmap.height);
-        const w = bitmap.width * ratio, h = bitmap.height * ratio;
-        ctx.drawImage(bitmap, (s.size - w) / 2, (s.size - h) / 2, w, h);
-        const data = ctx.getImageData(0, 0, s.size, s.size).data;
-        s.pixels = Array.from(
-          { length: s.size ** 2 },
-          (_, i) =>
-            (0.2126 * data[4 * i] + 0.7152 * data[4 * i + 1] +
-              0.0722 * data[4 * i + 2]) / 255,
-        );
-        s.inputName = file.name;
-        s.sample = "";
-        s.zoomKey++;
-        invalidate();
-        log(
-          `Loaded ${file.name}; grayscale [0, 1], aspect ratio preserved with black margins.`,
-        );
-      } catch {
-        if (id === uploadId) {
-          s.error =
-            "This image could not be decoded. Try another PNG, JPEG, or WebP.";
-        }
-      } finally {
-        bitmap?.close();
-        if (id === uploadId) s.uploadBusy = false;
-      }
+      return loadImage(() => Promise.resolve(file), file.name, "", s.size);
+    }
+    function setLesson(index) {
+      pause();
+      uploadId++;
+      s.uploadBusy = false;
+      imageSource?.close();
+      imageSource = null;
+      s.lesson = index;
+      s.quizAnswer = "";
+      s.lessonPixel = 4;
+      s.instant = index === 5;
+      s.displayMode = "grayscale";
+      s.flip = false;
+      s.stride = 1;
+      s.padding = index >= 4 ? 1 : 0;
+      s.kernelSize = index < 2 ? 1 : 3;
+      s.size = index === 3 ? 8 : 3;
+      s.preset = index === 3 ? "identity" : index >= 2 ? "blur" : "custom";
+      s.kernel = index < 2 ? [1] : [...presets[s.preset].values];
+      s.pixels = markRaw(
+        index === 0
+          ? [
+            0,
+            32 / 255,
+            64 / 255,
+            96 / 255,
+            128 / 255,
+            160 / 255,
+            192 / 255,
+            224 / 255,
+            1,
+          ]
+          : index === 1
+          ? Array(9).fill(0.5)
+          : index === 2
+          ? samplePixels("tiny", 3)
+          : index === 3
+          ? samplePixels("checker", 8)
+          : Array(9).fill(1),
+      );
+      s.sample = "";
+      s.inputName = `Lesson ${index + 1} example`;
+      s.zoomKey++;
+      invalidate();
+      if (index === 5) loadPhoto("cat", 256);
+      log(`Tutorial ${index + 1}/${lessons.length}: ${lessons[index].title}.`);
+    }
+    function leaveTutorial() {
+      pause();
+      s.lesson = -1;
+    }
+    function updateLessonPixel(value) {
+      const pixels = [...s.pixels];
+      pixels[s.lessonPixel] = Number(value) / 255;
+      s.pixels = markRaw(pixels);
+      invalidate();
+    }
+    function lessonWeights(average) {
+      s.kernel = Array(9).fill(average ? 1 / 9 : 1);
+      s.preset = average ? "blur" : "custom";
+      invalidate();
     }
     onMounted(connect);
     onUnmounted(() => {
       disposed = true;
+      uploadId++;
+      imageSource?.close();
       pause();
       clearTimeout(debounce);
       clearTimeout(reconnect);
@@ -694,6 +677,18 @@ createApp({
     return {
       s,
       presets,
+      photos,
+      lessons,
+      lesson,
+      exploring,
+      grayByte,
+      setLesson,
+      leaveTutorial,
+      updateLessonPixel,
+      lessonWeights,
+      loadPhoto,
+      instantConvolve,
+      toggleInstant,
       fmt,
       detail,
       ready,

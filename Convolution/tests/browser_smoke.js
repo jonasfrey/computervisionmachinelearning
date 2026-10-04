@@ -52,6 +52,7 @@ try {
   const ready = () =>
     page.waitForFunction(() =>
       !globalThis.lab.pending && !globalThis.lab.hookBusy &&
+      !globalThis.lab.uploadBusy &&
       globalThis.lab.output.length > 0
     );
   await ready();
@@ -99,8 +100,11 @@ try {
   await page.getByLabel("Stride", { exact: true }).selectOption("1");
   await page.getByLabel("Padding", { exact: true }).selectOption("0");
   await ready();
-  await page.getByRole("button", { name: "Show result ↗", exact: true })
+  await page.getByRole("button", { name: "ϟ Instant convolve", exact: true })
     .click();
+  assert.equal((await state()).instant, true);
+  assert.equal((await state()).revealed, 36);
+  await page.getByLabel("Instant after edits", { exact: true }).uncheck();
   const output = page.locator(".output-canvas canvas");
   await output.click({ position: { x: 8, y: 8 } });
   await page.keyboard.press("ArrowDown");
@@ -247,12 +251,186 @@ try {
   );
   await page.getByLabel("Kernel size", { exact: true }).selectOption("3");
   await page.getByRole("button", { name: "Shapes", exact: true }).click();
-  await page.getByRole("button", { name: "Show result ↗", exact: true })
+  await page.getByRole("button", { name: "ϟ Instant convolve", exact: true })
     .click();
   await page.screenshot({ path: `${screenshots}/mobile.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.getByLabel("START WITH A FILTER", { exact: true }).selectOption(
+    "identity",
+  );
+  await page.getByLabel("Padding", { exact: true }).selectOption("1");
+  await page.getByRole("button", { name: "Load cat photo", exact: true })
+    .click();
+  await ready();
+  s = await state();
+  assert.equal(s.sample, "cat");
+  assert.equal(s.size, 256);
+  assert.equal(s.revealed, 256 ** 2);
+  assert.equal(s.displayMode, "grayscale");
+  assert.deepEqual(s.output, s.pixels);
+  await page.getByLabel("Input size", { exact: true }).selectOption("512");
+  await ready();
+  s = await state();
+  assert.equal(s.size, 512);
+  assert.equal(s.revealed, 512 ** 2);
+  assert.deepEqual(s.output, s.pixels);
+  const photoPixels = s.pixels;
+  await page.getByLabel("Output display", { exact: true }).selectOption(
+    "signed",
+  );
+  assert.deepEqual(
+    (await state()).output,
+    photoPixels,
+    "Display mode must not alter raw data",
+  );
+  await page.getByLabel("Output display", { exact: true }).selectOption(
+    "grayscale",
+  );
+  await page.getByLabel("Input size", { exact: true }).selectOption("32");
+  await ready();
+  await page.getByLabel("Input size", { exact: true }).selectOption("512");
+  await ready();
+  assert.deepEqual(
+    (await state()).pixels,
+    photoPixels,
+    "Resizing must return to the original photo, not upscale the tiny preview",
+  );
+  await page.getByLabel("Kernel row 2 column 2", { exact: true }).fill("2");
+  await ready();
+  s = await state();
+  assert.equal(
+    s.revealed,
+    s.output.length,
+    "Instant mode must reveal edited results",
+  );
+  assert.equal(s.output[128 * 512 + 128], 2 * s.pixels[128 * 512 + 128]);
+  await page.getByLabel("Kernel callback body").fill(
+    "return row === 1 && col === 1 ? 1 : 0;",
+  );
+  await page.getByRole("button", { name: "Apply callback ↗", exact: true })
+    .click();
+  await ready();
+  s = await state();
+  assert.deepEqual(s.output, photoPixels);
+  assert.equal(
+    s.revealed,
+    s.output.length,
+    "Instant mode must apply to callbacks",
+  );
+  await page.screenshot({
+    path: `${screenshots}/photo-512.png`,
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Load coffee photo", exact: true })
+    .click();
+  await ready();
+  s = await state();
+  assert.equal(s.sample, "coffee");
+  assert.notDeepEqual(s.pixels, photoPixels);
+  await page.getByLabel("Instant after edits", { exact: true }).uncheck();
+  await page.getByLabel("Kernel row 2 column 2", { exact: true }).fill("0");
+  await ready();
+  assert.equal(
+    (await state()).revealed,
+    0,
+    "Animation mode should wait for playback after edits",
+  );
+
+  await page.getByRole("button", { name: "Learn step by step", exact: true })
+    .click();
+  await ready();
+  assert.equal((await state()).lesson, 0);
+  assert.equal(await page.locator(".workspace").count(), 0);
+  await page.getByLabel("Selected pixel brightness", { exact: true }).focus();
+  await page.keyboard.press("End");
+  assert.equal((await state()).pixels[4], 1);
+  await page.getByRole("button", { name: "Black", exact: true }).click();
+  assert.equal((await state()).pixels[4], 0);
+  await page.screenshot({
+    path: `${screenshots}/tutorial-pixels.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(() =>
+      document.documentElement.scrollWidth <= innerWidth
+    ),
+  );
+  await page.screenshot({
+    path: `${screenshots}/tutorial-mobile.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  const nextLesson = async () => {
+    await page.getByRole("button", { name: "Next lesson →", exact: true })
+      .click();
+    await ready();
+  };
+  await nextLesson();
+  s = await state();
+  assert.equal(s.kernelSize, 1);
+  assert.equal(s.output[0], 0.5);
+  await page.getByLabel("Kernel row 1 column 1", { exact: true }).fill("2");
+  await ready();
+  await page.getByRole("button", { name: "↦ Step", exact: true }).click();
+  assert.equal(await page.locator(".sum-value strong").textContent(), "1");
+  assert.match(await page.locator(".output-pixel").textContent(), /255 \/ 255/);
+  await nextLesson();
+  assert.ok(Math.abs((await state()).output[0] - 4 / 9) < 1e-10);
+  await page.getByRole("button", { name: "4/9", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: "Exactly" }).waitFor();
+  await page.getByRole("button", { name: "Try all weights = 1", exact: true })
+    .click();
+  await ready();
+  assert.equal((await state()).output[0], 4);
+  await page.getByRole("button", { name: "↦ Step", exact: true }).click();
+  assert.match(await page.locator(".output-pixel").textContent(), /255 \/ 255/);
+  const displayedPixel = await page.locator(".output-canvas canvas").evaluate(
+    (canvas) =>
+      Array.from(canvas.getContext("2d").getImageData(10, 10, 1, 1).data),
+  );
+  assert.deepEqual(
+    displayedPixel,
+    [255, 255, 255, 255],
+    "An output of 4 displays white in grayscale",
+  );
+  await page.getByRole("button", { name: "Restore the average", exact: true })
+    .click();
+  await ready();
+  assert.match(await page.locator(".output-pixel").textContent(), /113 \/ 255/);
+  await page.screenshot({
+    path: `${screenshots}/tutorial-sum.png`,
+    fullPage: true,
+  });
+  await nextLesson();
+  assert.equal((await state()).outputSize, 6);
+  assert.equal(await page.getByLabel("Padding", { exact: true }).count(), 0);
+  await page.getByLabel("Stride", { exact: true }).selectOption("2");
+  await ready();
+  assert.equal((await state()).outputSize, 3);
+  await nextLesson();
+  s = await state();
+  assert.equal(s.padding, 1);
+  assert.ok(Math.abs(s.output[0] - 4 / 9) < 1e-10);
+  assert.ok(Math.abs(s.output[4] - 1) < 1e-10);
+  await nextLesson();
+  s = await state();
+  assert.equal(s.lesson, 5);
+  assert.equal(s.sample, "cat");
+  assert.equal(s.size, 256);
+  assert.equal(s.instant, true);
+  assert.equal(s.revealed, s.output.length);
+  await page.getByRole("button", { name: "← Previous", exact: true }).click();
+  await ready();
+  assert.equal((await state()).lesson, 4);
+  await nextLesson();
+  await page.getByRole("button", { name: "Finish tutorial", exact: true })
+    .click();
+  assert.equal((await state()).lesson, -1);
+  assert.equal((await state()).sample, "cat");
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: numerical display, stepping, playback, padding, stride, flip, editing, callback errors and timeout, zoom/pan, keyboard, upload, protocol validation, mobile layout, no browser errors",
+    "PASS: six tutorial lessons, 512px photos, source-preserving resize, instant callbacks, grayscale display, numerical display, stepping, playback, padding, stride, flip, editing, callback errors and timeout, zoom/pan, keyboard, upload, protocol validation, mobile layout, no browser errors",
   );
   console.log(`Screenshots: ${screenshots}`);
 } finally {

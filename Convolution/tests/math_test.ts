@@ -134,7 +134,7 @@ Deno.test("invalid dimensions, pixel values, kernels and coordinates are rejecte
   for (
     const patch of [
       { size: 0 },
-      { size: 65 },
+      { size: 513 },
       { size: 3.5 },
       { pixels: [] },
       { kernelSize: 2 },
@@ -164,5 +164,37 @@ Deno.test("invalid dimensions, pixel values, kernels and coordinates are rejecte
   }
   for (const index of [-1, 1, 0.5, NaN]) {
     assert.throws(() => inspect(config(), index));
+  }
+});
+
+Deno.test("512-pixel inputs retain exact values and border arithmetic", () => {
+  const c = config({
+    size: 512,
+    pixels: Array(512 ** 2).fill(1),
+    kernel: Array(9).fill(1 / 9),
+    padding: 1,
+  });
+  const result = convolve(c);
+  assert.equal(result.size, 512);
+  assert.equal(result.values.length, 512 ** 2);
+  close(result.values[0], 4 / 9);
+  close(result.values[256 * 512 + 256], 1);
+  close(result.values.at(-1)!, 4 / 9);
+  for (const index of [0, 511, 512, 123456, result.values.length - 1]) {
+    close(result.values[index], inspect(c, index).sum);
+  }
+  const varied = config({
+    size: 512,
+    pixels: Array.from({ length: 512 ** 2 }, (_, i) => i % 256 / 255),
+    kernelSize: 7,
+    kernel: Array.from({ length: 49 }, (_, i) => (i % 7 - 3) / 7),
+    padding: 3,
+    stride: 4,
+    flip: true,
+  });
+  const strided = convolve(varied);
+  assert.equal(strided.size, 128);
+  for (const index of [0, 127, 128, 1000, strided.values.length - 1]) {
+    close(strided.values[index], inspect(varied, index).sum);
   }
 });
