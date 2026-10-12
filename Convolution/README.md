@@ -72,6 +72,39 @@ grayscale image and a 3 × 3 vertical-edge filter.
   original photo or upload, preserving detail when you increase the size again.
   Zoom up to 64× to inspect individual pixels in a large image.
 
+## Paint your own input
+
+In **Explore freely** (or the final tutorial lesson), use the input tools:
+
+- **Paint** draws directly on the current image. Choose the brush size in input
+  pixels and brightness from 0 (black) to 255 (white).
+- **Eraser** paints black. **New blank** starts a black canvas at the selected
+  input size. You can paint over a sample, photograph, upload, or saved drawing.
+- **Undo** and **Redo** restore up to ten painting operations, including
+  starting a blank canvas. Loading another input or resizing resets this
+  history. Resizing a painted image uses the painting as its source, so marks
+  are preserved instead of reverting to the original photo.
+- Drag with a mouse, pen, or finger. Scroll to zoom; **Shift-drag** pans without
+  painting. With the canvas focused, use arrow keys to move the brush and
+  **Space** or **Enter** to paint a pixel or brush dab.
+- Switch to **Inspect** to select convolution windows and pan normally. Padding
+  remains outside the editable image. Every painting change invalidates the
+  previous result; **Instant after edits** reveals the updated convolution when
+  ready.
+
+Expand **Saved paintings**, enter a name, and click **Save painting** to add a
+new copy to the local gallery. Click a thumbnail to reload its original size and
+exact pixel values, then continue drawing or try another filter. Deleting a
+saved copy leaves the current canvas unchanged.
+
+The gallery persists across reloads in this browser at the same address and
+port. It uses browser storage and is not shared across devices. **Download PNG**
+exports the input at its actual resolution, without the kernel overlay or
+padding. PNG exports use 8-bit grayscale and can be loaded again with **Upload
+image**. Download remains available if browser storage is unavailable.
+
+## How values are displayed
+
 The default operation is unflipped cross-correlation, following the CNN
 convention documented in
 [PyTorch Conv2d](https://docs.pytorch.org/docs/stable/generated/torch.nn.Conv2d.html).

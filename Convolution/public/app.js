@@ -8,6 +8,8 @@ import {
 } from "/vue.js";
 import { inspect, outputSize, validate } from "./math.js";
 import PixelMap from "./pixel-map.js";
+import { paintSegment, resizePainting } from "./painting.js";
+import * as paintingLibrary from "./painting-library.js";
 
 const presets = {
   edge: {
@@ -142,6 +144,17 @@ export const store = reactive({
   lesson: -1,
   lessonPixel: 4,
   quizAnswer: "",
+  paintMode: "inspect",
+  brushSize: 3,
+  brushValue: 255,
+  drawing: false,
+  undoCount: 0,
+  redoCount: 0,
+  paintingName: "",
+  paintings: [],
+  savingPainting: false,
+  paintingNotice: "",
+  paintingError: "",
 });
 
 export function fmt(value) {
@@ -164,6 +177,8 @@ createApp({
       disposed = false,
       cancelHook;
     let submitted, imageSource = null;
+    let paintedSource = null, stroke = null, paintFrame;
+    const undoHistory = [], redoHistory = [];
     const config = () => ({
       size: s.size,
       pixels: [...s.pixels],
@@ -177,7 +192,7 @@ createApp({
       s.resultConfig ? inspect(s.resultConfig, Math.max(0, s.cursor)) : null
     );
     const ready = computed(() =>
-      s.connected && !s.pending && !s.hookBusy && !s.uploadBusy &&
+      s.connected && !s.pending && !s.hookBusy && !s.uploadBusy && !s.drawing &&
       !!s.output.length
     );
     const total = computed(() => s.output.length);
@@ -385,7 +400,240 @@ createApp({
         ),
       });
     }
+    function paintingSnapshot() {
+      return {
+        pixels: s.pixels,
+        sample: s.sample,
+        inputName: s.inputName,
+        source: paintedSource,
+      };
+    }
+    function syncHistory() {
+      s.undoCount = undoHistory.length;
+      s.redoCount = redoHistory.length;
+    }
+    function rememberPainting(before) {
+      undoHistory.push(before);
+      if (undoHistory.length > 10) undoHistory.shift();
+      redoHistory.length = 0;
+      syncHistory();
+    }
+    function publishStroke() {
+      if (!stroke?.dirty) return;
+      s.pixels = markRaw([...stroke.pixels]);
+      paintedSource = { size: s.size, pixels: s.pixels };
+      s.sample = "";
+      s.inputName = s.paintingName.trim() || "Custom painting";
+      s.paintingNotice = "";
+      stroke.dirty = false;
+      invalidate();
+    }
+    function finishStroke() {
+      cancelAnimationFrame(paintFrame);
+      paintFrame = null;
+      if (!stroke) return;
+      publishStroke();
+      if (stroke.changed) rememberPainting(stroke.before);
+      stroke = null;
+      s.drawing = false;
+    }
+    function paint({ phase, point }) {
+      if (phase === "start") {
+        finishStroke();
+        pause();
+        uploadId++;
+        s.uploadBusy = false;
+        stroke = {
+          before: paintingSnapshot(),
+          pixels: [...s.pixels],
+          point,
+          value: s.paintMode === "erase" ? 0 : s.brushValue / 255,
+          diameter: Math.min(s.size, s.brushSize),
+          changed: false,
+          dirty: false,
+        };
+        s.drawing = true;
+      }
+      if (!stroke) return;
+      if (point) {
+        if (
+          paintSegment(
+            stroke.pixels,
+            s.size,
+            stroke.point,
+            point,
+            stroke.diameter,
+            stroke.value,
+          )
+        ) {
+          stroke.changed = stroke.dirty = true;
+          if (!paintFrame) {
+            paintFrame = requestAnimationFrame(() => {
+              paintFrame = null;
+              publishStroke();
+            });
+          }
+        }
+        stroke.point = point;
+      }
+      if (phase === "end") finishStroke();
+    }
+    function setPaintMode(mode) {
+      finishStroke();
+      pause();
+      s.paintMode = mode;
+    }
+    function resetPainting() {
+      finishStroke();
+      undoHistory.length = redoHistory.length = 0;
+      syncHistory();
+      paintedSource = null;
+      s.paintMode = "inspect";
+      s.paintingName = "";
+      s.paintingNotice = "";
+    }
+    function blankPainting() {
+      finishStroke();
+      const before = paintingSnapshot();
+      uploadId++;
+      s.uploadBusy = false;
+      s.pixels = markRaw(Array(s.size ** 2).fill(0));
+      paintedSource = { size: s.size, pixels: s.pixels };
+      s.sample = "";
+      s.inputName = s.paintingName.trim() || "Custom painting";
+      s.paintingNotice = "";
+      s.paintMode = "paint";
+      s.zoomKey++;
+      rememberPainting(before);
+      invalidate();
+      log("Started a blank painting. Undo restores the previous image.");
+    }
+    function undoPainting(redo = false) {
+      finishStroke();
+      const from = redo ? redoHistory : undoHistory,
+        to = redo ? undoHistory : redoHistory;
+      if (!from.length) return;
+      to.push(paintingSnapshot());
+      const previous = from.pop();
+      s.pixels = previous.pixels;
+      s.sample = previous.sample;
+      s.inputName = previous.inputName;
+      paintedSource = previous.source;
+      s.paintingNotice = "";
+      syncHistory();
+      invalidate();
+    }
+    function paintingCanvas(pixels, size) {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d"),
+        image = ctx.createImageData(size, size);
+      pixels.forEach((value, i) => {
+        const v = grayByte(value), offset = i * 4;
+        image.data[offset] =
+          image.data[offset + 1] =
+          image.data[offset + 2] =
+            v;
+        image.data[offset + 3] = 255;
+      });
+      ctx.putImageData(image, 0, 0);
+      return canvas;
+    }
+    async function refreshPaintings() {
+      try {
+        s.paintings = await paintingLibrary.listPaintings();
+      } catch {
+        s.paintingError =
+          "Saved paintings are unavailable. You can still paint and download a PNG.";
+      }
+    }
+    async function savePainting() {
+      finishStroke();
+      const name = s.paintingName.trim().slice(0, 64) ||
+        `Painting ${s.paintings.length + 1}`;
+      const record = {
+        id: crypto.randomUUID(),
+        name,
+        size: s.size,
+        pixels: [...s.pixels],
+        createdAt: Date.now(),
+      };
+      const preview = document.createElement("canvas");
+      preview.width = preview.height = 80;
+      const ctx = preview.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(paintingCanvas(record.pixels, record.size), 0, 0, 80, 80);
+      record.preview = preview.toDataURL("image/png");
+      s.savingPainting = true;
+      s.paintingError = "";
+      s.paintingNotice = "";
+      try {
+        await paintingLibrary.savePainting(record);
+        await refreshPaintings();
+        s.paintingNotice = `Saved “${name}” in this browser.`;
+        log(`Saved painting “${name}” (${record.size} × ${record.size}).`);
+      } catch {
+        s.paintingError =
+          "Could not save this painting. Browser storage may be full or unavailable; download a PNG to keep it.";
+      } finally {
+        s.savingPainting = false;
+      }
+    }
+    async function loadPainting(id) {
+      finishStroke();
+      const token = ++uploadId;
+      s.uploadBusy = true;
+      s.paintingError = "";
+      pause();
+      try {
+        const record = await paintingLibrary.loadPainting(id);
+        if (token !== uploadId || disposed) return;
+        resetPainting();
+        imageSource?.close();
+        imageSource = null;
+        s.size = record.size;
+        s.pixels = markRaw(record.pixels);
+        paintedSource = { size: s.size, pixels: s.pixels };
+        s.sample = "";
+        s.inputName = record.name;
+        s.paintingName = record.name;
+        s.displayMode = "grayscale";
+        s.paintMode = "paint";
+        s.zoomKey++;
+        invalidate();
+        log(`Loaded saved painting “${record.name}”.`);
+      } catch (error) {
+        if (token === uploadId) {
+          s.paintingError = error.message ||
+            "Could not load the saved painting.";
+        }
+      } finally {
+        if (token === uploadId) s.uploadBusy = false;
+      }
+    }
+    async function deletePainting(id) {
+      s.paintingError = "";
+      try {
+        await paintingLibrary.deletePainting(id);
+        await refreshPaintings();
+        s.paintingNotice =
+          "Saved painting deleted. The current canvas is unchanged.";
+      } catch {
+        s.paintingError =
+          "Could not delete the saved painting. Please try again.";
+      }
+    }
+    function downloadPainting() {
+      finishStroke();
+      const link = document.createElement("a");
+      link.href = paintingCanvas(s.pixels, s.size).toDataURL("image/png");
+      const name = s.paintingName.trim() || "convolution-painting";
+      link.download = `${name.replace(/[^a-z0-9 _-]/gi, "_").slice(0, 64)}.png`;
+      link.click();
+      log("Downloaded the input painting as a PNG.");
+    }
     function loadSample(name) {
+      resetPainting();
       uploadId++;
       s.uploadBusy = false;
       imageSource?.close();
@@ -412,11 +660,18 @@ createApp({
       log(`Loaded ${s.inputName.toLowerCase()} (${s.size} × ${s.size}).`);
     }
     function resizeInput(event) {
+      finishStroke();
+      undoHistory.length = redoHistory.length = 0;
+      syncHistory();
       const oldSize = s.size, oldPixels = s.pixels;
       s.size = Number(event.target.value);
       uploadId++;
       s.uploadBusy = false;
-      s.pixels = imageSource
+      s.pixels = paintedSource
+        ? markRaw(
+          resizePainting(paintedSource.pixels, paintedSource.size, s.size),
+        )
+        : imageSource
         ? pixelsFromImage(imageSource, s.size)
         : s.sample && s.sample !== "tiny"
         ? markRaw(samplePixels(s.sample, s.size))
@@ -543,6 +798,8 @@ createApp({
       );
     }
     async function loadImage(readBlob, name, sample, size) {
+      finishStroke();
+      s.paintMode = "inspect";
       const id = ++uploadId;
       s.error = "";
       s.uploadBusy = true;
@@ -552,6 +809,7 @@ createApp({
         bitmap = await createImageBitmap(await readBlob());
         if (id !== uploadId || disposed) return;
         const pixels = pixelsFromImage(bitmap, size);
+        resetPainting();
         imageSource?.close();
         imageSource = bitmap;
         bitmap = null;
@@ -603,6 +861,7 @@ createApp({
       return loadImage(() => Promise.resolve(file), file.name, "", s.size);
     }
     function setLesson(index) {
+      resetPainting();
       pause();
       uploadId++;
       s.uploadBusy = false;
@@ -663,9 +922,13 @@ createApp({
       s.preset = average ? "blur" : "custom";
       invalidate();
     }
-    onMounted(connect);
+    onMounted(() => {
+      connect();
+      refreshPaintings();
+    });
     onUnmounted(() => {
       disposed = true;
+      cancelAnimationFrame(paintFrame);
       uploadId++;
       imageSource?.close();
       pause();
@@ -713,6 +976,14 @@ createApp({
       callbackPreset,
       applyHook,
       upload,
+      paint,
+      setPaintMode,
+      blankPainting,
+      undoPainting,
+      savePainting,
+      loadPainting,
+      deletePainting,
+      downloadPainting,
     };
   },
 }).mount("#app");

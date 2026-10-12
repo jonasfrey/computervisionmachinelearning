@@ -8,6 +8,11 @@ const files: Record<string, [string, string]> = {
   "/convolution/styles.css": ["styles.css", "text/css"],
   "/convolution/kernel-worker.js": ["kernel-worker.js", "text/javascript"],
   "/convolution/pixel-map.js": ["pixel-map.js", "text/javascript"],
+  "/convolution/painting.js": ["painting.js", "text/javascript"],
+  "/convolution/painting-library.js": [
+    "painting-library.js",
+    "text/javascript",
+  ],
   "/convolution/images/cat.png": ["images/cat.png", "image/png"],
   "/convolution/images/coffee.png": ["images/coffee.png", "image/png"],
 };

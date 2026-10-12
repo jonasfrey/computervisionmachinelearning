@@ -28,3 +28,9 @@ problem:
 the convolution examples are impractical because tiny images such as 32x32 displayed in a large area are not realistic
 possible solution: 
 provide much larger images and add real world default images , like an image of a cat. 
+
+
+problem: 
+the input images are not diverse enought, the user cannot try out everything and experiment enought
+possible solution: 
+- add small freehand drawin functions so the user can draw and store custom paintings

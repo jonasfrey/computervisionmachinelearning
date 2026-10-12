@@ -74,11 +74,24 @@
               class="section-title"><span class="number">01</span><h2>Input image</h2><span class="tag">{{ s.size }} × {{ s.size }} × 1</span></div>
             <div
               class="image-meta"><span :title="s.inputName">{{ s.inputName }}</span><button class="text-button" @click="s.zoomKey++" title="Reset zoom and pan on both images">Reset view ↺</button></div>
+            <div v-if="exploring" class="paint-tools" role="group"
+              aria-label="Input tools"><button @click="setPaintMode('inspect')" :aria-pressed="s.paintMode === 'inspect'" title="Select convolution windows and drag to pan">Inspect</button><button @click="setPaintMode('paint')" :aria-pressed="s.paintMode === 'paint'" title="Draw on the input image">Paint</button><button @click="setPaintMode('erase')" :aria-pressed="s.paintMode === 'erase'" title="Paint black pixels">Eraser</button><button @click="blankPainting" title="Start a black canvas at the current size; Undo restores your image">New blank</button></div>
             <div class="canvas-wrap">
               <pixel-map :key="'input-' + s.zoomKey" :values="s.pixels"
-                :size="s.size" :padding="s.padding" :overlay="overlay"
-                @cell="selectInput"
-                label="Input image with moving kernel. Scroll to zoom, drag to pan, click to position the kernel."></pixel-map>
+                :size="s.size" :padding="s.padding"
+                :overlay="s.paintMode === 'inspect' ? overlay : null"
+                :tool="s.paintMode" :brush-size="Math.min(s.size, s.brushSize)"
+                @cell="selectInput" @paint="paint"
+                :label="s.paintMode === 'inspect' ? 'Input image with moving kernel. Scroll to zoom, drag to pan, click to position the kernel.' : 'Painting canvas. Drag to paint; Shift-drag to pan; scroll to zoom. Arrow keys move the brush; Space paints.'"></pixel-map>
+            </div>
+            <div v-if="exploring && s.paintMode !== 'inspect'"
+              class="brush-controls">
+              <label>Brush size<input type="range" min="1" :max="Math.min(65, s.size % 2 ? s.size : s.size - 1)" step="2" v-model.number="s.brushSize" aria-label="Brush size"><output>{{ Math.min(s.size, s.brushSize) }} px</output></label>
+              <label>Brightness<input type="range" min="0" max="255" v-model.number="s.brushValue" :disabled="s.paintMode === 'erase'" aria-label="Brush brightness"><output>{{ s.paintMode === "erase" ? 0 : s.brushValue }} / 255</output></label>
+              <div
+                class="paint-actions"><button @click="undoPainting()" :disabled="!s.undoCount">↶ Undo</button><button @click="undoPainting(true)" :disabled="!s.redoCount">↷ Redo</button><span class="micro">{{ s.paintMode === "erase" ? "Eraser paints black." : "0 = black · 255 = white" }}</span></div>
+              <p
+                class="micro">Drag to draw · Shift-drag to pan · scroll to zoom.<br>Arrow keys move the brush; Space paints. Padding stays zero.</p>
             </div>
             <div
               class="image-legend"><span><i class="kernel-swatch"></i>Kernel window</span><span v-if="s.padding"><i class="padding-swatch"></i>Zero padding</span><span v-else>Black 0 → white 1</span></div>
@@ -90,7 +103,23 @@
               aria-label="Input examples"><button v-for="(name, key) in { shapes: 'Shapes', edge: 'Edge', checker: 'Checker', gradient: 'Gradient' }" :key="key" @click="loadSample(key)" :class="{ active: s.sample === key }">{{ name }}</button></div>
             <div v-if="exploring"
               class="input-controls"><label class="button upload">↥ {{ s.uploadBusy ? "Loading…" : "Upload image" }}<input type="file" accept="image/png,image/jpeg,image/webp" @change="upload" aria-label="Upload input image"></label><label class="inline-field">Size <select :value="s.size" @change="resizeInput" aria-label="Input size"><option v-for="n in [3,8,16,32,64,128,256,512]" :value="n">{{ n }} × {{ n }}</option></select></label></div>
-            <p
+            <details v-if="exploring" class="painting-library"
+              :open="s.paintMode !== 'inspect'">
+              <summary>Saved paintings <span>{{ s.paintings.length }}</span></summary>
+              <div
+                class="save-painting"><label for="painting-name">Painting name</label><input id="painting-name" v-model="s.paintingName" maxlength="64" placeholder="My painting"><div><button class="primary" @click="savePainting" :disabled="s.savingPainting || s.uploadBusy || s.drawing">{{ s.savingPainting ? "Saving…" : "Save painting" }}</button><button @click="downloadPainting" :disabled="s.uploadBusy || s.drawing">Download PNG</button></div><p class="micro">Saved in this browser on this address, including its port. Download a PNG to keep a portable copy.</p></div>
+              <div class="painting-gallery" v-if="s.paintings.length">
+                <div v-for="painting in s.paintings" :key="painting.id"
+                  class="saved-painting"><button @click="loadPainting(painting.id)" :aria-label="'Load saved painting ' + painting.name"><img :src="painting.preview" alt=""><span>{{ painting.name }}<small>{{ painting.size }} × {{ painting.size }}</small></span></button><button class="delete-painting" @click="deletePainting(painting.id)" :aria-label="'Delete saved painting ' + painting.name" title="Delete this saved copy; the current canvas stays unchanged">×</button></div>
+              </div>
+              <p v-else
+                class="micro">Save your first painting to reuse it after a reload.</p>
+            </details>
+            <p v-if="s.paintingNotice" class="painting-notice"
+              role="status">{{ s.paintingNotice }}</p>
+            <p v-if="s.paintingError" class="painting-error"
+              role="alert">{{ s.paintingError }}</p>
+            <p v-if="s.paintMode === 'inspect'"
               class="micro">Scroll to zoom · drag to pan · click to move the window</p>
           </section>
 

@@ -211,6 +211,141 @@
   gap: 7px;
   margin: 14px 0 10px;
 }
+.paint-tools {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.paint-tools button {
+  flex: 1;
+  padding: 6px 3px;
+  font-size: 11px;
+}
+.paint-tools [aria-pressed="true"] {
+  background: #eaf3d5;
+  border-color: #b8cc98;
+}
+.brush-controls {
+  padding: 12px 0 0;
+}
+.brush-controls > label {
+  display: grid;
+  grid-template-columns: 64px minmax(30px, 1fr) 58px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.brush-controls input {
+  min-width: 0;
+  width: 100%;
+  accent-color: #648a46;
+}
+.brush-controls output {
+  text-align: right;
+  font-family: monospace;
+}
+.paint-actions {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin: 10px 0;
+}
+.paint-actions button {
+  font-size: 10px;
+  padding: 5px 8px;
+}
+.paint-actions span {
+  margin-left: auto;
+}
+.painting-library {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  margin-top: 12px;
+}
+.painting-library summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.painting-library summary span {
+  color: var(--muted);
+  margin-left: 5px;
+}
+.save-painting {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.save-painting > label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.save-painting > input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #fbfcf8;
+}
+.save-painting > div {
+  display: flex;
+  gap: 6px;
+}
+.painting-gallery {
+  display: grid;
+  gap: 7px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+.saved-painting {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.saved-painting > button:first-child {
+  flex: 1;
+  justify-content: flex-start;
+  padding: 5px;
+  text-align: left;
+  min-width: 0;
+}
+.saved-painting img {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border-radius: 3px;
+}
+.saved-painting span {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.saved-painting small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.saved-painting .delete-painting {
+  flex-shrink: 0;
+  padding: 6px 8px;
+}
+.painting-notice,
+.painting-error {
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.painting-notice {
+  color: #557544;
+}
+.painting-error {
+  color: #984a32;
+}
 .photo-samples button {
   padding: 5px;
   justify-content: flex-start;

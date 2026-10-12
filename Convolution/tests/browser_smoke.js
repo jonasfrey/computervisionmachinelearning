@@ -3,6 +3,7 @@ import { chromium } from "npm:playwright-core@1.56.1";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { handler } from "../../LeNet-5/server.ts";
+import { checkPainting } from "./painting_browser.js";
 
 const server = Deno.serve(
   { hostname: "127.0.0.1", port: 0, onListen() {} },
@@ -428,6 +429,7 @@ try {
     .click();
   assert.equal((await state()).lesson, -1);
   assert.equal((await state()).sample, "cat");
+  await checkPainting(page, screenshots);
   assert.deepEqual(errors, []);
   console.log(
     "PASS: six tutorial lessons, 512px photos, source-preserving resize, instant callbacks, grayscale display, numerical display, stepping, playback, padding, stride, flip, editing, callback errors and timeout, zoom/pan, keyboard, upload, protocol validation, mobile layout, no browser errors",

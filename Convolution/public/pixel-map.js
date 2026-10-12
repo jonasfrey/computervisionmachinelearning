@@ -13,11 +13,13 @@ export default {
     signed: Boolean,
     scale: { default: 1 },
     label: String,
+    tool: { default: "inspect" },
+    brushSize: { default: 3 },
   },
-  emits: ["cell"],
+  emits: ["cell", "paint"],
   setup(props, { emit }) {
     const canvas = ref(null);
-    let zoom = 1, panX = 0, panY = 0, drag = null, raster;
+    let zoom = 1, panX = 0, panY = 0, drag = null, raster, brush = null;
     const dimension = () => props.size + 2 * props.padding;
     function rebuild() {
       const dim = dimension();
@@ -148,6 +150,22 @@ export default {
         ctx.strokeStyle = "#7aa437";
         ctx.strokeRect(x * cell, y * cell, cell, cell);
       }
+      if (props.tool !== "inspect" && brush) {
+        ctx.beginPath();
+        ctx.arc(
+          (brush.x + props.padding) * cell,
+          (brush.y + props.padding) * cell,
+          props.brushSize * cell / 2,
+          0,
+          2 * Math.PI,
+        );
+        ctx.strokeStyle = "#17241b";
+        ctx.lineWidth = 3 / zoom;
+        ctx.stroke();
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 1 / zoom;
+        ctx.stroke();
+      }
       ctx.restore();
     }
     function point(event) {
@@ -159,6 +177,7 @@ export default {
     }
     function wheel(event) {
       event.preventDefault();
+      if (drag) return;
       const p = point(event),
         next = Math.max(
           1,
@@ -170,14 +189,45 @@ export default {
       if (zoom === 1) panX = panY = 0;
       draw();
     }
+    function inputPoint(p) {
+      const cell = 640 / dimension();
+      return {
+        x: Math.floor((p.x - panX) / zoom / cell) - props.padding + 0.5,
+        y: Math.floor((p.y - panY) / zoom / cell) - props.padding + 0.5,
+      };
+    }
     function down(event) {
+      if (event.button !== 0 || drag || event.isPrimary === false) return;
+      event.preventDefault();
+      canvas.value.focus({ preventScroll: true });
       const p = point(event);
-      drag = { ...p, lastX: p.x, lastY: p.y, moved: false };
+      drag = {
+        ...p,
+        lastX: p.x,
+        lastY: p.y,
+        moved: false,
+        pointerId: event.pointerId,
+        painting: props.tool !== "inspect" && !event.shiftKey,
+      };
       canvas.value.setPointerCapture(event.pointerId);
+      if (drag.painting) {
+        brush = inputPoint(p);
+        emit("paint", { phase: "start", point: brush });
+      }
     }
     function move(event) {
-      if (!drag) return;
+      if (drag && drag.pointerId !== event.pointerId) return;
       const p = point(event);
+      brush = inputPoint(p);
+      if (!drag) {
+        if (props.tool !== "inspect") draw();
+        return;
+      }
+      if (drag.painting) {
+        emit("paint", { phase: "move", point: brush });
+        draw();
+        return;
+      }
       if (Math.hypot(p.x - drag.x, p.y - drag.y) > 5) drag.moved = true;
       if (drag.moved) {
         panX += p.x - drag.lastX;
@@ -188,7 +238,13 @@ export default {
       drag.lastY = p.y;
     }
     function up(event) {
-      if (!drag) return;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (drag.painting) {
+        brush = inputPoint(point(event));
+        emit("paint", { phase: "end", point: brush });
+        drag = null;
+        return;
+      }
       if (!drag.moved) {
         const p = point(event), cell = 640 / dimension();
         const x = Math.floor((p.x - panX) / zoom / cell) - props.padding;
@@ -199,6 +255,17 @@ export default {
       }
       drag = null;
     }
+    function cancel(event) {
+      if (!drag || event && drag.pointerId !== event.pointerId) return;
+      if (drag.painting) emit("paint", { phase: "end" });
+      drag = null;
+    }
+    function leave() {
+      if (!drag) {
+        brush = null;
+        draw();
+      }
+    }
     function keyboard(event) {
       const offsets = {
         ArrowLeft: [-1, 0],
@@ -206,6 +273,28 @@ export default {
         ArrowUp: [0, -1],
         ArrowDown: [0, 1],
       };
+      if (props.tool !== "inspect") {
+        if (!offsets[event.key] && event.key !== " " && event.key !== "Enter") {
+          return;
+        }
+        event.preventDefault();
+        brush ||= {
+          x: Math.floor(props.size / 2) + 0.5,
+          y: Math.floor(props.size / 2) + 0.5,
+        };
+        if (offsets[event.key]) {
+          const [dx, dy] = offsets[event.key];
+          brush = {
+            x: Math.max(0.5, Math.min(props.size - 0.5, brush.x + dx)),
+            y: Math.max(0.5, Math.min(props.size - 0.5, brush.y + dy)),
+          };
+        } else {
+          emit("paint", { phase: "start", point: brush });
+          emit("paint", { phase: "end" });
+        }
+        draw();
+        return;
+      }
       if (!offsets[event.key]) return;
       event.preventDefault();
       const current = props.selected || { x: 0, y: 0 },
@@ -227,6 +316,10 @@ export default {
       rebuild,
     );
     watch(() => [props.overlay, props.selected, props.revealed], draw);
+    watch(() => [props.tool, props.brushSize], () => {
+      cancel();
+      draw();
+    });
     return {
       canvas,
       wheel,
@@ -234,9 +327,10 @@ export default {
       move,
       up,
       keyboard,
-      cancel: () => drag = null,
+      cancel,
+      leave,
     };
   },
   template:
-    `<canvas ref="canvas" width="640" height="640" tabindex="0" :aria-label="label" @wheel="wheel" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="cancel" @lostpointercapture="cancel" @keydown="keyboard"></canvas>`,
+    `<canvas ref="canvas" width="640" height="640" tabindex="0" :aria-label="label" @wheel="wheel" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="cancel" @lostpointercapture="cancel" @pointerleave="leave" @keydown="keyboard"></canvas>`,
 };

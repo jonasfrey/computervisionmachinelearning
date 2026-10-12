@@ -58,21 +58,23 @@ validation, and mobile layout.
 
 ## Code layout
 
-| File                                  | Responsibility                                                   |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `LeNet-5/model.ts`                    | Pure numerical model; shared forward/inspection calculations     |
-| `LeNet-5/protocol.ts`                 | Per-WebSocket run state, validation, layer ordering              |
-| `LeNet-5/server.ts`                   | Deno HTTP assets, health check, WebSocket transport, server logs |
-| `LeNet-5/public/app.js`               | Vue UI, one reactive store, drawing, heatmaps, playback          |
-| `LeNet-5/public/hook-worker.js`       | Browser callback execution                                       |
-| `LeNet-5/tests/`                      | Numerical, protocol, and browser checks                          |
-| `Convolution/server.ts`               | Convolution assets, validated WebSocket computation, logs        |
-| `Convolution/public/math.js`          | Shared convolution and cell-inspection arithmetic                |
-| `Convolution/public/app.js`           | Convolution Vue UI, image input, canvas overlay, playback        |
-| `Convolution/public/pixel-map.js`     | Cached canvas rendering, zoom, pan, and pixel selection          |
-| `Convolution/public/images/`          | Bundled CC0 photographs and source credits                       |
-| `Convolution/public/kernel-worker.js` | Kernel callback execution                                        |
-| `Convolution/tests/`                  | Numerical fixtures and browser regression checks                 |
+| File                                     | Responsibility                                                   |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| `LeNet-5/model.ts`                       | Pure numerical model; shared forward/inspection calculations     |
+| `LeNet-5/protocol.ts`                    | Per-WebSocket run state, validation, layer ordering              |
+| `LeNet-5/server.ts`                      | Deno HTTP assets, health check, WebSocket transport, server logs |
+| `LeNet-5/public/app.js`                  | Vue UI, one reactive store, drawing, heatmaps, playback          |
+| `LeNet-5/public/hook-worker.js`          | Browser callback execution                                       |
+| `LeNet-5/tests/`                         | Numerical, protocol, and browser checks                          |
+| `Convolution/server.ts`                  | Convolution assets, validated WebSocket computation, logs        |
+| `Convolution/public/math.js`             | Shared convolution and cell-inspection arithmetic                |
+| `Convolution/public/app.js`              | Convolution Vue UI, image input, canvas overlay, playback        |
+| `Convolution/public/pixel-map.js`        | Cached canvas rendering, zoom, pan, and pixel selection          |
+| `Convolution/public/painting.js`         | Brush segments, painting validation, and resizing                |
+| `Convolution/public/painting-library.js` | Browser storage for named paintings                              |
+| `Convolution/public/images/`             | Bundled CC0 photographs and source credits                       |
+| `Convolution/public/kernel-worker.js`    | Kernel callback execution                                        |
+| `Convolution/tests/`                     | Numerical fixtures and browser regression checks                 |
 
 ## Computation and inspection
 
@@ -103,6 +105,15 @@ cell. Canvas rendering caches a raster for each input/result, then draws the
 scan overlay and visible labels separately. Resizing photographs samples the
 retained original bitmap. Sample assets are bundled locally with
 [source credits](../Convolution/public/images/README.md).
+
+Painting edits the actual input array. Pointer coordinates account for zoom,
+pan, and padding, and brush segments interpolate between pointer events. The
+client publishes immutable pixel snapshots once per animation frame, debounces
+convolution requests, and keeps up to ten undo operations. Named paintings store
+their full pixel values, original size, name, and thumbnail in IndexedDB
+(`vision-lab-paintings`, version 1). PNG downloads contain only the input image.
+The browser regression suite checks drawing, erasing, history, persistence,
+storage errors, downloads, zoom/padding coordinates, and touch interaction.
 
 Callbacks in both labs run in short-lived browser workers. Only validated
 numeric results reach the server. See each lab's guide for its callback
